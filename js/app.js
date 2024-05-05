@@ -1,3 +1,99 @@
+// Central initialization function
+function initializeApp() {
+  // Initialize APP object
+  APP.init();
+
+  // Get schedule data from URL and populate form
+  const scheduleData = getScheduleDataFromURL();
+  if (scheduleData) {
+    populateAndSubmitForm(scheduleData);
+  }
+}
+
+function getScheduleDataFromURL() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const encodedData = urlParams.get('data');
+  if (encodedData) {
+     return JSON.parse(atob(encodedData));
+  }
+  return null;
+ }
+
+ function populateAndSubmitForm(scheduleData) {
+    // Assuming scheduleData is an array of objects
+    scheduleData.forEach(data => {
+      // Split the schedule string into individual entries
+      const scheduleEntries = data.schedule.split(',');
+  
+      // Extract days from the first entry (assuming all entries have the same time)
+      const days = scheduleEntries.map(entry => entry.trim().split(' ')[0]).join(', ');
+  
+      // Extract the time from the first entry (assuming all entries have the same time)
+      const [_, time] = scheduleEntries[0].trim().split(' ');
+      const [startTime, endTime] = time.split('-');
+  
+      // Prepare the data for the table row
+      const rowData = {
+        sCode: data.subjectCode,
+        sName: data.subjectName,
+        schedDay: days, // Use the extracted days joined as a string
+        startTime: convertTo24HourFormat(startTime),
+        endTime: convertTo24HourFormat(endTime),
+        description: data.subjectName + ' Class',
+        location: data.sectionRoom,
+        isPrivate: 'TRUE'
+      };
+  
+      // Convert rowData to FormData for consistency with manual input
+      const formData = new FormData();
+      Object.keys(rowData).forEach(key => formData.append(key, rowData[key]));
+  
+      // Cache the data in APP.data
+      APP.cacheData(formData);
+  
+      // Build the row in the table
+      APP.buildRow(formData);
+    });
+  }
+ 
+ // Convert time to 24-hour format if necessary
+ function convertTo24HourFormat(time) {
+    // Regular expression to match time formats
+    // This regex matches:
+    // - HH:MM AM/PM
+    // - HH:MM:SS AM/PM
+    // - HH:MM
+    // - HH:MM:SS
+    const timeRegex = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s?(AM|PM)?$/i;
+   
+    // Check if the time matches the expected format
+    const match = time.match(timeRegex);
+    if (!match) {
+       console.error('Invalid time format');
+       return time; // Return the original time if it doesn't match
+    }
+   
+    let hours = parseInt(match[1], 10);
+    const minutes = match[2];
+    const seconds = match[3] || '00';
+    const period = match[4] || '';
+   
+    // Convert hours to 24-hour format if period is specified
+    if (period) {
+       if (period.toUpperCase() === 'PM' && hours < 12) {
+         hours += 12;
+       } else if (period.toUpperCase() === 'AM' && hours === 12) {
+         hours = 0;
+       }
+    }
+   
+    // Ensure hours are two digits
+    hours = String(hours).padStart(2, '0');
+   
+    // Return the time in 24-hour format
+    return `${hours}:${minutes}:${seconds}`;
+   }
+   
 function convertTo12HourFormat(time) {
   let [hours, minutes] = time.split(':');
   let period = 'AM';
@@ -13,6 +109,7 @@ function convertTo12HourFormat(time) {
 
   return `${hours}:${minutes} ${period}`;
 }
+
 let row;
 const APP = {
   data: [],
@@ -23,27 +120,31 @@ const APP = {
     const form = document.querySelector('#collect form');
     form.addEventListener('submit', APP.saveData);
 
-    document.querySelector('#btnCancel').addEventListener('click', APP.clearInputField);
-
     document.querySelector('table tbody').addEventListener('click', (ev) => {
-      const rowIndex = ev.target.closest('tr').getAttribute('data-row');
-      row = rowIndex;
-      if (APP.isEditing && (ev.target.id === 'edit' || ev.target.id === 'delete')) {
-        alert("You are currently editing a schedule row. Please save it first!");
-        document.getElementById('sCode').focus();
-        return; // Prevent form submission
-      } else {
-        if (ev.target.classList.contains('btn-info')||ev.target.classList.contains('glyphicon-edit')) {
+      const rowIndex = +ev.target.closest('tr').getAttribute('data-row');
+      if (ev.target.classList.contains('btn-info')||ev.target.classList.contains('glyphicon-edit')) {
+        if (APP.isEditing) {
+          alert("You are currently editing a schedule row. Please save it first!");
+          document.getElementById('sCode').focus();
+          return; // Prevent form submission
+        }else{
           APP.editRow(rowIndex);
-        } else if (ev.target.classList.contains('btn-danger')||ev.target.classList.contains('glyphicon-trash')) {
-          APP.deleteRow(rowIndex);
+          row = rowIndex;
         }
-      }  
+      } else if (ev.target.classList.contains('btn-danger')||ev.target.classList.contains('glyphicon-trash')) {
+        if (APP.isEditing) {
+          alert("You are currently editing a schedule row. Please save it first!");
+          document.getElementById('sCode').focus();
+          return; // Prevent form submission
+        }else{
+          APP.deleteRow(rowIndex);
+          
+        }      
+      }
     });
 
-    document
-      .getElementById('btnExport')
-      .addEventListener('click', APP.exportData);
+    document.querySelector('#btnCancel').addEventListener('click', APP.clearInputField);
+
   },
   clearInputField() {
     if(APP.isEditing){
@@ -111,9 +212,21 @@ const APP = {
     //focus on first field
     document.getElementById('sCode').focus();
   },
-  cacheData(formdata) {
-    //extract the data from the FormData object and update APP.data
-    APP.data.push(Array.from(formdata.values()));
+  // Updated cacheData function
+  cacheData(formdata, rowIndex) {
+    // Create a structured object that includes the form data and the row index
+    const data = {
+      index: rowIndex,
+      values: Array.from(formdata.values())
+    };
+  
+    // If rowIndex is provided, update the existing data; otherwise, add new data
+    if (rowIndex !== undefined) {
+      APP.data[rowIndex] = data;
+    } else {
+      APP.data.push(data);
+    }
+  
     console.table(APP.data);
   },
   buildRow(formdata) {
@@ -140,7 +253,7 @@ const APP = {
     APP.isEditing = true; // Set the flag to indicate an edit operation
     APP.editingRowIndex = rowIndex; // Store the row index being edited
     const row = document.querySelector(`tbody tr[data-row="${rowIndex}"]`);
-    const data = APP.data[rowIndex];
+    const data = APP.data[rowIndex].values;
    
     row.classList.add('bg-info');
 
@@ -148,10 +261,11 @@ const APP = {
     document.getElementById('sCode').value = data[0];
     document.getElementById('sName').value = data[1];
    
-    // Handle checkboxes
-    const days = data[2].split(','); // Assuming the days are stored as a comma-separated string
+  // Handle checkboxes for days
+    const days = data[2].split(',').map(day => day.trim()); // Split and trim the days string
     document.querySelectorAll('#schedDays input[type="checkbox"]').forEach(checkbox => {
-       checkbox.checked = days.includes(checkbox.nextElementSibling.textContent.trim());
+        const dayLabel = checkbox.nextElementSibling.textContent.trim();
+        checkbox.checked = days.includes(dayLabel); // Check if the day is in the days array
     });
    
     // Handle other inputs similarly
@@ -171,7 +285,7 @@ const APP = {
   },
   updateRow(formdata, rowIndex) {
      // Update the existing row in APP.data
-     APP.data[rowIndex] = Array.from(formdata.values());
+     APP.data[rowIndex].values = Array.from(formdata.values());
      // Update the row in the table
      const row = document.querySelector(`tbody tr[data-row="${rowIndex}"]`);
      row.innerHTML = ''; // Clear the row
@@ -194,7 +308,15 @@ const APP = {
     const row = document.querySelector(`tbody tr[data-row="${rowIndex}"]`);
     tbody.removeChild(row);
     APP.data.splice(rowIndex, 1); // Remove the row data from APP.data
+
+        // Update the data-row attributes of all rows that come after the deleted row
+    document.querySelectorAll('tbody tr').forEach((tr, index) => {
+      tr.setAttribute('data-row', index);
+    });
+
+    console.table(APP.data);
    },   
 };
 
-document.addEventListener('DOMContentLoaded', APP.init);
+// Consolidate DOMContentLoaded event listener
+document.addEventListener('DOMContentLoaded', initializeApp);
